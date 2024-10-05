@@ -68,7 +68,7 @@ class Lichess {
     final url = Uri(scheme: "https", host: "lichess.org", path: '/api/board/seek');
     String seekParams = "variant=${variant.name}&rated=$rated&time=$minutes&color=${color ?? 'random'}&increment=$inc&ratingRange=$minRating-$maxRating"; //print("Seek params: $bodyText");
     seekClient!.post(url,headers: {
-      'Content-type' : 'application/x-ndjson',
+      'Content-type' : 'application/x-www-form-urlencoded',
       'Authorization' : "Bearer $oauth",
     }, body: seekParams).then((response) { //print("Got seek response: ${response.body}");
       seekCompleter?.complete(response);

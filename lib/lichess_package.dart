@@ -1,10 +1,13 @@
 library lichess_package;
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:fetch_client/fetch_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:fetch_client/fetch_client.dart' as fetch;
+import 'package:lichess_package/zug_sock.dart';
 
 enum LichessVariant {
   standard, chess960, crazyhouse, antichess, atomic, horde, kingOfTheHill, racingKings, threeCheck, fromPosition
@@ -18,13 +21,48 @@ enum LichessRatingType {
   ultraBullet,bullet,blitz,rapid,classical
 }
 
+typedef SockMsgCallback = void Function(dynamic msg);
 typedef EventStreamCallback = void Function(Stream<String> stream);
 typedef GameStreamCallback = void Function(String id, Stream<String> stream);
 
-class Lichess {
+class LichessClient {
 
-  static http.Client? seekClient;
-  static Completer<http.Response>? seekCompleter;
+  String schema;
+  String host;
+  bool web;
+  bool running = true;
+  Queue sockMsgQueue = Queue();
+  late ZugSock lichSock;
+
+  Uri getEndPoint(String path, {Map<String, dynamic>? params}) {
+    return Uri(scheme: schema, host: host, path: path, queryParameters: params);
+  }
+
+  http.Client? seekClient;
+  Completer<http.Response>? seekCompleter;
+
+  LichessClient({this.schema = "https", this.host = "lichess.org", this.web = false, VoidCallback? onConnect, VoidCallback? onDisconnect, SockMsgCallback? onMsg}) {
+    lichSock = ZugSock('wss://socket.$host/api/socket', onConnect ?? defConnect, onMsg ?? defMsg, onDisconnect ?? defDisconnect);
+    loopSock();
+  }
+
+  void defConnect() {}
+  void defDisconnect() {}
+  void defMsg(msg) {}
+
+  Future<void> loopSock() async {
+    while (running) {
+      if (sockMsgQueue.isNotEmpty) {
+        lichSock.send(jsonEncode(sockMsgQueue.removeLast()));
+      }
+      await Future.delayed(const Duration(seconds: 2));
+      lichSock.send("{ t : 0, p : 0 }");
+    }
+  }
+
+  void addSockMsg(msg) {
+    sockMsgQueue.addFirst(msg);
+  }
 
   static LichessRatingType? getRatingType(double minutes, int inc) {
     int t = (40 * inc) + ((minutes * 60).round());
@@ -37,9 +75,9 @@ class Lichess {
       _ => null}; //throw Exception("weird time control")};
   }
 
-  static Future<int> makeMove(String move, String gameId, String token, {web = false}) async {
+  Future<int> makeMove(String move, String gameId, String token) async {
     final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
-    return (await client.post(Uri.parse("https://lichess.org/api/board/game/$gameId/move/$move"),
+    return (await client.post(getEndPoint("api/board/game/$gameId/move/$move"),
         headers: {
           'Content-type' : 'application/x-www-form-urlencoded',
           'Authorization' : "Bearer $token",
@@ -47,7 +85,7 @@ class Lichess {
     )).statusCode;
   }
 
-  static Future<int> boardAction(BoardAction action, String gameID, String token, {web = false}) async {
+  Future<int> boardAction(BoardAction action, String gameID, String token) async {
     String actionPath = switch(action) {
       BoardAction.resign => "resign",
       BoardAction.abort => "abort",
@@ -59,7 +97,7 @@ class Lichess {
       BoardAction.beserk => "berserk",
     };
     final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
-    return (await client.post(Uri.parse("https://lichess.org/api/board/game/$gameID/$actionPath"),
+    return (await client.post(getEndPoint("api/board/game/$gameID/$actionPath"),
         headers: {
           'Content-type' : 'application/x-www-form-urlencoded',
           'Authorization' : "Bearer $token",
@@ -67,23 +105,21 @@ class Lichess {
     )).statusCode;
   }
 
-  static Future<dynamic> getAccount(String oauth,{bool web = false}) async {
+  Future<dynamic> getAccount(String oauth) async {
     final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
-    final url = Uri(scheme: "https", host: "lichess.org", path: '/api/account');
-    return jsonDecode((await client.get(url,headers: {
+    return jsonDecode((await client.get(getEndPoint('api/account'),headers: {
       'Content-type' : 'application/json',
       'Authorization' : "Bearer $oauth",
     })).body);
   }
 
-  static Future<String> createSeek(LichessVariant variant, int minutes, int inc, bool rated, String oauth, {bool web = false, int? minRating, int? maxRating, String? color}) async {
+  Future<String> createSeek(LichessVariant variant, int minutes, int inc, bool rated, String oauth, {int? minRating, int? maxRating, String? color}) async {
     removeSeek();
     seekCompleter = Completer();
     seekClient = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
-    final url = Uri(scheme: "https", host: "lichess.org", path: '/api/board/seek');
     String ratRange = minRating != null && maxRating != null ? "&ratingRange=$minRating-$maxRating" : "";
     String seekParams = "variant=${variant.name}&rated=$rated&time=$minutes&color=${color ?? 'random'}&increment=$inc$ratRange"; //print("Seek params: $bodyText");
-    seekClient!.post(url,headers: {
+    seekClient!.post(getEndPoint('api/board/seek'),headers: {
       'Content-type' : 'application/x-www-form-urlencoded',
       'Authorization' : "Bearer $oauth",
     }, body: seekParams).then((response) { //print("Got seek response: ${response.body}");
@@ -94,37 +130,35 @@ class Lichess {
     return "${response?.body} / ${response?.statusCode}";
   }
 
-  static void removeSeek() {
+  void removeSeek() {
     seekClient?.close();
     seekClient = null;
     seekCompleter?.complete(http.Response("Seek cancelled",200));
   }
 
-  static void getEventStream(String token, EventStreamCallback callback, {bool web = false}) async {
+  void getEventStream(String token, EventStreamCallback callback) async {
     final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
-    final url = Uri.parse('https://lichess.org/api/stream/event');
-    final request = http.Request('GET', url);
+    final request = http.Request('GET', getEndPoint("api/stream/event"));
     request.headers['Content-type'] = 'application/x-ndjson';
     request.headers['Authorization'] = "Bearer $token";
     client.send(request).then((response) => callback(response.stream.toStringStream()));
   }
 
-  static void followGame(String id, String token, GameStreamCallback callback, { bool web = false }) async {
+  void followGame(String id, String token, GameStreamCallback callback) async {
     final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
-    final url = Uri.parse('https://lichess.org/api/board/game/stream/$id');
-    final request = http.Request('GET', url);
+    final request = http.Request('GET', getEndPoint("api/board/game/stream/$id"));
     request.headers['Content-type'] = 'application/x-ndjson';
     request.headers['Accept'] = 'application/x-ndjson';
     request.headers['Authorization'] =  "Bearer $token";
     client.send(request).then((response) => callback(id,response.stream.toStringStream()));
   }
 
-  static Future<List<dynamic>> getTV(String channel, int numGames) async {
+  Future<List<dynamic>> getTV(String channel, int numGames) async {
+    final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
     List<dynamic> games = [];
-    final client = http.Client();
     Map<String,String> headers = {};
     headers['Accept'] = 'application/x-ndjson';
-    http.Response response = await client.get(Uri.parse("https://lichess.org/api/tv/$channel?nb=$numGames"),headers: headers);
+    http.Response response = await client.get(getEndPoint("api/tv/$channel",params : {'nb' : "$numGames"}),headers: headers);
     response.body.split("\n").forEach((game) { //print("Game: $game");
         if (game.isNotEmpty) games.add(jsonDecode(game));
     });

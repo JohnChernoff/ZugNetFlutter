@@ -1,10 +1,13 @@
+import 'dart:ui';
+
+import 'package:lichess_package/lichess_package.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class ZugSock {
   late final WebSocketChannel _channel;
-  Function onClose;
+  VoidCallback onClose;
 
-  ZugSock(String address,onConnect,onMsg,this.onClose) {
+  ZugSock(String address,VoidCallback onConnect,SockMsgCallback onMsg,this.onClose) {
 
     _channel = WebSocketChannel.connect(
       Uri.parse(address),

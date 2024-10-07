@@ -14,6 +14,10 @@ enum BoardAction {
   resign,abort,drawYes,drawNo,offerTakeBack,declineTakeBack,claimVictory,beserk
 }
 
+enum LichessRatingType {
+  ultraBullet,bullet,blitz,rapid,classical
+}
+
 typedef EventStreamCallback = void Function(Stream<String> stream);
 typedef GameStreamCallback = void Function(String id, Stream<String> stream);
 
@@ -21,6 +25,17 @@ class Lichess {
 
   static http.Client? seekClient;
   static Completer<http.Response>? seekCompleter;
+
+  static LichessRatingType? getRatingType(double minutes, int inc) {
+    int t = (40 * inc) + ((minutes * 60).round());
+    return switch(t) {
+      < 29 => LichessRatingType.ultraBullet,
+      < 179 => LichessRatingType.bullet,
+      < 479 => LichessRatingType.blitz,
+      < 1499 => LichessRatingType.rapid,
+      >= 1500 => LichessRatingType.classical,
+      _ => null}; //throw Exception("weird time control")};
+  }
 
   static Future<int> makeMove(String move, String gameId, String token, {web = false}) async {
     final client = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
@@ -61,12 +76,13 @@ class Lichess {
     })).body);
   }
 
-  static Future<String> createSeek(LichessVariant variant, int minutes, int inc, bool rated, String oauth, {bool web = false, minRating = 0, maxRating = 9999, String? color}) async {
+  static Future<String> createSeek(LichessVariant variant, int minutes, int inc, bool rated, String oauth, {bool web = false, int? minRating, int? maxRating, String? color}) async {
     removeSeek();
     seekCompleter = Completer();
     seekClient = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
     final url = Uri(scheme: "https", host: "lichess.org", path: '/api/board/seek');
-    String seekParams = "variant=${variant.name}&rated=$rated&time=$minutes&color=${color ?? 'random'}&increment=$inc&ratingRange=$minRating-$maxRating"; //print("Seek params: $bodyText");
+    String ratRange = minRating != null && maxRating != null ? "&ratingRange=$minRating-$maxRating" : "";
+    String seekParams = "variant=${variant.name}&rated=$rated&time=$minutes&color=${color ?? 'random'}&increment=$inc$ratRange"; //print("Seek params: $bodyText");
     seekClient!.post(url,headers: {
       'Content-type' : 'application/x-www-form-urlencoded',
       'Authorization' : "Bearer $oauth",

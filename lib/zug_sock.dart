@@ -1,12 +1,13 @@
-import 'dart:ui';
+library zug_net;
 
-import 'package:lichess_package/lichess_package.dart';
+import 'dart:ui';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+typedef SockMsgCallback = void Function(dynamic msg);
 
 class ZugSock {
   late final WebSocketChannel _channel;
   VoidCallback onClose;
-
   ZugSock(String address,VoidCallback onConnect,SockMsgCallback onMsg,this.onClose) {
 
     _channel = WebSocketChannel.connect(

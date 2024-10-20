@@ -1,4 +1,4 @@
-library lichess_package;
+library zug_net;
 
 import 'dart:async';
 import 'dart:collection';
@@ -7,7 +7,7 @@ import 'dart:ui';
 import 'package:fetch_client/fetch_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:fetch_client/fetch_client.dart' as fetch;
-import 'package:lichess_package/zug_sock.dart';
+import 'package:zug_net/zug_sock.dart';
 
 enum LichessVariant {
   standard, chess960, crazyhouse, antichess, atomic, horde, kingOfTheHill, racingKings, threeCheck, fromPosition
@@ -21,7 +21,6 @@ enum LichessRatingType {
   ultraBullet,bullet,blitz,rapid,classical
 }
 
-typedef SockMsgCallback = void Function(dynamic msg);
 typedef EventStreamCallback = void Function(Stream<String> stream);
 typedef GameStreamCallback = void Function(String id, Stream<String> stream);
 
@@ -38,8 +37,8 @@ class LichessClient {
     return Uri(scheme: schema, host: host, path: path, queryParameters: params);
   }
 
-  http.Client? seekClient;
-  Completer<http.Response>? seekCompleter;
+  http.Client? seekClient, challengeClient;
+  Completer<http.Response>? seekCompleter, challengeCompleter;
 
   LichessClient({this.schema = "https", this.host = "lichess.org", this.web = false, VoidCallback? onConnect, VoidCallback? onDisconnect, SockMsgCallback? onMsg}) {
     lichSock = ZugSock('wss://socket.$host/api/socket', onConnect ?? defConnect, onMsg ?? defMsg, onDisconnect ?? defDisconnect);
@@ -111,6 +110,29 @@ class LichessClient {
       'Content-type' : 'application/json',
       'Authorization' : "Bearer $oauth",
     })).body);
+  }
+
+  Future<String> createChallenge(String player, LichessVariant variant, int seconds, int inc, bool rated, String oauth, {String? color}) async {
+    removeSeek();
+    challengeCompleter = Completer();
+    challengeClient = web ? fetch.FetchClient(mode: RequestMode.cors) : http.Client();
+    String seekParams = "variant=${variant.name}&rated=$rated&clock.limit=$seconds&clock.increment=$inc&color=${color ?? 'random'}&keepAliveStream=true"; //print("Seek params: $bodyText");
+    challengeClient!.post(getEndPoint('api/challenge/$player'),headers: {
+      'Content-type' : 'application/x-www-form-urlencoded',
+      'Accept' : 'application/x-ndjson',
+      'Authorization' : "Bearer $oauth",
+    }, body: seekParams).then((response) { //print("Got seek response: ${response.body}");
+      challengeCompleter?.complete(response);
+    });
+    http.Response? response = await challengeCompleter?.future;
+    challengeCompleter = null;
+    return "${response?.body} / ${response?.statusCode}";
+  }
+
+  void removeChallenge() {
+    challengeClient?.close();
+    challengeClient = null;
+    challengeCompleter?.complete(http.Response("Challenge cancelled",200));
   }
 
   Future<String> createSeek(LichessVariant variant, int minutes, int inc, bool rated, String oauth, {int? minRating, int? maxRating, String? color}) async {

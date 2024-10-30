@@ -12,6 +12,10 @@ dependencies:
   fetch_client: ^1.1.2
   web_socket_channel: ^2.4.0
   http: ^1.1.0
+  oauth2: ^2.0.2
+  shared_preferences: ^2.2.2
+  url_launcher: ^6.2.1
+  webview_flutter: ^4.4.2
 
   flutter:
     sdk: flutter

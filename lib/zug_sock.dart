@@ -1,7 +1,6 @@
 library zug_net;
 
 import 'dart:ui';
-import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 typedef SockMsgCallback = void Function(dynamic msg);
@@ -10,26 +9,38 @@ class ZugSock {
   late final WebSocketChannel _channel;
   VoidCallback onClose;
 
-  ZugSock(String address, VoidCallback onConnect, SockMsgCallback onMsg, this.onClose, {int pingInterval = 30}) {
+  ZugSock(
+      String address,
+      VoidCallback onConnect,
+      SockMsgCallback onMsg,
+      this.onClose,
+      ) {
+    _channel = WebSocketChannel.connect(Uri.parse(address));
 
-    _channel = IOWebSocketChannel.connect(
-      address,
-      pingInterval: Duration(seconds: pingInterval),
-    );
+    // Extract underlying browser WebSocket
+    final ws = (_channel as dynamic).innerWebSocket;
 
+    if (ws != null) {
+      ws.onClose.listen((event) {
+        print("Browser close event:");
+        print("  code: ${event.code}");
+        print("  reason: ${event.reason}");
+        print("  clean: ${event.wasClean}");
+      });
+    }
+
+    // Listen for actual messages
     _channel.stream.listen(
           (message) {
-        logMsg("RECV: $message");
+        //print("WebSocket message: $message");
         onMsg(message);
       },
       onDone: () {
-        logMsg("WebSocket Closed");
-        logMsg("  closeCode   = ${_channel.closeCode}");
-        logMsg("  closeReason = ${_channel.closeReason}");
+        print("WebSocket done");
         close();
       },
       onError: (error) {
-        logMsg("WebSocket Error: $error");
+        print("WebSocket error: $error");
         close();
       },
     );
@@ -37,20 +48,11 @@ class ZugSock {
     onConnect();
   }
 
-  void send(msg) {
-    if ((_channel.closeCode ?? 0) > 0) {
-      logMsg("Closed socket!");
-      close();
-    } else {
-      _channel.sink.add(msg);
-    }
-  }
+  void send(msg) => _channel.sink.add(msg);
 
   void close() {
     _channel.sink.close();
     onClose();
   }
-
-  void logMsg(String msg) => print(msg);
 }
 
